@@ -42,38 +42,39 @@ int main(void) {
 
     pthread_t threads[queueSize(head)];
     
-    // while (current) {
-    //   Args args = current->command;
-
-    //   if (args.args[0] && strcmp(args.args[0], "exit") == 0) {
-    //     should_run = 0;
-    //     break;
-    //   }
-
-    //   execCommands(args);
-      
-    //   current = current->next;
-    // }
-
-    int i = 0;
     while (current) {
       Args *currentArg = (Args *)malloc(sizeof(Args));
       *currentArg = current->command;
-
-      pthread_create(&threads[i], NULL, (void*)execCommands, currentArg);
 
       if (currentArg->args[0] && strcmp(currentArg->args[0], "exit") == 0) {
         should_run = 0;
         break;
       }
 
+      execCommands(currentArg);
+      
       current = current->next;
-      i++;
     }
 
-    for (int j = 0; j < i; j++) {
-      pthread_join(threads[j], NULL);
-    }
+    // int i = 0;
+    // while (current) {
+    //   Args *currentArg = (Args *)malloc(sizeof(Args));
+    //   *currentArg = current->command;
+
+    //   pthread_create(&threads[i], NULL, (void*)execCommands, currentArg);
+
+    //   if (currentArg->args[0] && strcmp(currentArg->args[0], "exit") == 0) {
+    //     should_run = 0;
+    //     break;
+    //   }
+
+    //   current = current->next;
+    //   i++;
+    // }
+
+    // for (int j = 0; j < i; j++) {
+    //   pthread_join(threads[j], NULL);
+    // }
 
     while (head) {
       Node *temp = head;
