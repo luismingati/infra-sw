@@ -41,7 +41,7 @@ int main(void) {
     Node *current = head;
 
     pthread_t threads[queueSize(head)];
-    
+    //alterando pra subir no git
     while (current) {
       Args *currentArg = (Args *)malloc(sizeof(Args));
       *currentArg = current->command;
