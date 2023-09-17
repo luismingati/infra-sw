@@ -3,84 +3,108 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <ctype.h>
+#include <pthread.h>
 
 typedef struct Args {
   char **args;
   int size;
 } Args;
 
-typedef struct Node{
-      Args args;
-      struct Node *next;
+typedef struct Node {
+    Args command;
+    struct Node *next;
 } Node;
 
-Args createArgs(char *buffer);
-void enqueue(Node **head, Node **tail, Args args);
-void dequeue(Node **head, Node **tail);
-void printFila(Node *head);
+Node* createArgsQueue(char *buffer);
+char *trim(char *str);
+int execCommands(Args *arg);
+int queueSize(Node *head);
 
 int main(void) {
   int should_run = 1;
-  Node *head = NULL;
-  Node *tail = NULL;
-
+  
   while (should_run) {
-    printf("locm >");
+    printf("locm seq> ");
     fflush(stdout);
 
     char *buffer = NULL;
     size_t n = 0;
     ssize_t result = getline(&buffer, &n, stdin);
-    
+
     if (result == -1) {
-      free(buffer);
-      continue;
-    }
-    //if in buffer has ; then split and execute
-    
-    Args args = createArgs(buffer);
-    
-
-    enqueue(&head, &tail, args);
-    printFila(head);
-    if (args.args[0] && strcmp(args.args[0], "exit") == 0) {
-      free(buffer);
-      free(args.args);
-      break;
+        free(buffer);
+        continue;
     }
 
-    pid_t pid = fork();
-    if (pid < 0) {
-      fprintf(stderr, "Fork Failed");
-      free(buffer);
-      free(args.args);
-      return 1;
-    } else if (pid == 0) {
-      execvp(args.args[0], args.args);
-      perror("locm >");  
-      exit(EXIT_FAILURE);
-    } else {
-      wait(NULL);
-    }
+    Node *head = createArgsQueue(buffer);
+    Node *current = head;
+
+    pthread_t threads[queueSize(head)];
     
+    // while (current) {
+    //   Args args = current->command;
+
+    //   if (args.args[0] && strcmp(args.args[0], "exit") == 0) {
+    //     should_run = 0;
+    //     break;
+    //   }
+
+    //   execCommands(args);
+      
+    //   current = current->next;
+    // }
+
+    int i = 0;
+    while (current) {
+      Args *currentArg = (Args *)malloc(sizeof(Args));
+      *currentArg = current->command;
+
+      pthread_create(&threads[i], NULL, (void*)execCommands, currentArg);
+
+      if (currentArg->args[0] && strcmp(currentArg->args[0], "exit") == 0) {
+        should_run = 0;
+        break;
+      }
+
+      current = current->next;
+      i++;
+    }
+
+    for (int j = 0; j < i; j++) {
+      pthread_join(threads[j], NULL);
+    }
+
+    while (head) {
+      Node *temp = head;
+      head = head->next;
+      free(temp->command.args);
+      free(temp);
+    }
+
     free(buffer);
-    free(args.args);
   }
 
   return 0;
 }
 
-Args createArgs(char *buffer) {
-    int bufferLength = strlen(buffer);
-    char **argsList = malloc((bufferLength / 2 + 1) * sizeof(char *));
+Node* createArgsQueue(char *buffer) {
+  buffer[strcspn(buffer, "\n")] = 0;
 
-    buffer[strcspn(buffer, "\n")] = 0;
+  Node *head = NULL;
+  Node *tail = NULL;
+  char *outer_saveptr = NULL, *inner_saveptr = NULL;
 
-    char *token = strtok(buffer, " ");
+  char *commandToken = strtok_r(buffer, ";", &outer_saveptr);
+  while (commandToken) {
+    commandToken = trim(commandToken);  
+    char **argsList = malloc((strlen(commandToken) + 1) * sizeof(char *));
     int index = 0;
-    while (token != NULL) {
-      argsList[index] = token;
-      token = strtok(NULL, " ");
+    char *argToken = strtok_r(commandToken, " ", &inner_saveptr);
+
+    while (argToken) {
+      argsList[index] = argToken;
+      argToken = strtok_r(NULL, " ", &inner_saveptr);
       index++;
     }
     argsList[index] = NULL;
@@ -88,43 +112,61 @@ Args createArgs(char *buffer) {
     Args args;
     args.args = argsList;
     args.size = index;
-    return args;
-}
 
-void enqueue(Node **head, Node **tail, Args args) {
-  Node *new = (Node *)malloc(sizeof(Node));
-  if (new != NULL) {
-    new->args = args;
-    new->next = NULL;
+    Node *newNode = malloc(sizeof(Node));
+    newNode->command = args;
+    newNode->next = NULL;
 
-    if (*head == NULL) {
-      *head = new;
-      *tail = new;
+    if (!head) {
+      head = newNode;
+      tail = newNode;
     } else {
-      (*tail)->next = new;
-      *tail = new;
+      tail->next = newNode;
+      tail = newNode;
     }
+    commandToken = strtok_r(NULL, ";", &outer_saveptr);
+  }
+  return head;
+}
+
+char *trim(char *str) {
+  char *end;
+  while(isspace((unsigned char)*str)) {
+    str++;
   } 
+  if(*str == 0) {
+    return str;
+  }
+  end = str + strlen(str) - 1;
+  while(end > str && isspace((unsigned char)*end)) {
+    end--;
+  }
+  end[1] = '\0';
+  return str;
 }
 
-void dequeue(Node **head, Node **tail) {
-
-  Node *aux;
-  if ((*head) != NULL) {
-    aux = *head;
-    *head = (*head)->next;
-    free(aux);
-    if ((*head) == NULL) 
-      *tail = NULL;
+int execCommands(Args *arg) {
+  pid_t pid = fork();
+  if (pid < 0) {
+    fprintf(stderr, "Fork Failed");
+    free(arg);
+    return 1;
+  } else if (pid == 0) {
+    execvp(arg->args[0], arg->args);
+    perror("locm seq> ");  
+    exit(EXIT_FAILURE);
+  } else {
+    wait(NULL);
+    free(arg); 
   }
 }
 
-void printFila(Node *head) {
-  int i = 0;
-  while (head != NULL) {
-    printf("%s-> ", head->args.args[i]);
-    i++;
-    head = head->next;
+int queueSize(Node *head) {
+  int size = 0;
+  Node *current = head;
+  while (current) {
+    size++;
+    current = current->next;
   }
-  printf("NULL \n");
+  return size;
 }
