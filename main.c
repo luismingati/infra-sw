@@ -20,10 +20,11 @@ Node* createArgsQueue(char *buffer);
 char *trim(char *str);
 int execCommands(Args *arg);
 int queueSize(Node *head);
+void freeQueue(Node *head);
 
 int main(void) {
   int should_run = 1;
-  
+
   while (should_run) {
     printf("locm seq> ");
     fflush(stdout);
@@ -41,7 +42,7 @@ int main(void) {
     Node *current = head;
 
     pthread_t threads[queueSize(head)];
-    //alterando pra subir no git
+
     while (current) {
       Args *currentArg = (Args *)malloc(sizeof(Args));
       *currentArg = current->command;
@@ -52,7 +53,7 @@ int main(void) {
       }
 
       execCommands(currentArg);
-      
+
       current = current->next;
     }
 
@@ -61,34 +62,35 @@ int main(void) {
     //   Args *currentArg = (Args *)malloc(sizeof(Args));
     //   *currentArg = current->command;
 
-    //   pthread_create(&threads[i], NULL, (void*)execCommands, currentArg);
-
     //   if (currentArg->args[0] && strcmp(currentArg->args[0], "exit") == 0) {
     //     should_run = 0;
-    //     break;
+    //     if(current->next) {
+    //       *currentArg = current->next->command;
+    //     }
+    //   } else {
+    //     pthread_create(&threads[i], NULL, (void*)execCommands, currentArg);
+    //     i++;
     //   }
 
     //   current = current->next;
-    //   i++;
     // }
 
     // for (int j = 0; j < i; j++) {
     //   pthread_join(threads[j], NULL);
     // }
 
-    while (head) {
-      Node *temp = head;
-      head = head->next;
-      free(temp->command.args);
-      free(temp);
+    if(should_run == 0) {
+      break;
     }
 
+    freeQueue(head);
     free(buffer);
   }
 
   return 0;
 }
 
+//perguntar: Quando o usuario usa o comando git commit -m "a b c" ele entende ""a" "b" "c"" como strings separadas, é bug
 Node* createArgsQueue(char *buffer) {
   buffer[strcspn(buffer, "\n")] = 0;
 
@@ -98,7 +100,7 @@ Node* createArgsQueue(char *buffer) {
 
   char *commandToken = strtok_r(buffer, ";", &outer_saveptr);
   while (commandToken) {
-    commandToken = trim(commandToken);  
+    commandToken = trim(commandToken);
     char **argsList = malloc((strlen(commandToken) + 1) * sizeof(char *));
     int index = 0;
     char *argToken = strtok_r(commandToken, " ", &inner_saveptr);
@@ -134,7 +136,7 @@ char *trim(char *str) {
   char *end;
   while(isspace((unsigned char)*str)) {
     str++;
-  } 
+  }
   if(*str == 0) {
     return str;
   }
@@ -154,11 +156,11 @@ int execCommands(Args *arg) {
     return 1;
   } else if (pid == 0) {
     execvp(arg->args[0], arg->args);
-    perror("locm seq> ");  
+    perror("locm seq> ");
     exit(EXIT_FAILURE);
   } else {
     wait(NULL);
-    free(arg); 
+    free(arg);
   }
 }
 
@@ -170,4 +172,13 @@ int queueSize(Node *head) {
     current = current->next;
   }
   return size;
+}
+
+void freeQueue(Node *head) {
+  while (head) {
+    Node *temp = head;
+    head = head->next;
+    free(temp->command.args);
+    free(temp);
+  }
 }
