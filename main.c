@@ -6,6 +6,8 @@
 #include <ctype.h>
 #include <pthread.h>
 
+int style = 0; //0 = sequential, 1 = parallel
+
 typedef struct Args {
   char **args;
   int size;
@@ -26,7 +28,11 @@ int main(void) {
   int should_run = 1;
 
   while (should_run) {
-    printf("locm seq> ");
+    if(style == 0) {
+      printf("locm seq> ");
+    } else if(style == 1) {
+      printf("locm par> ");
+    }
     fflush(stdout);
 
     char *buffer = NULL;
@@ -43,41 +49,50 @@ int main(void) {
 
     pthread_t threads[queueSize(head)];
 
+    int i = 0;
     while (current) {
       Args *currentArg = (Args *)malloc(sizeof(Args));
       *currentArg = current->command;
-
-      if (currentArg->args[0] && strcmp(currentArg->args[0], "exit") == 0) {
-        should_run = 0;
-        break;
+      if(strcmp(currentArg->args[0], "style") == 0 && strcmp(currentArg->args[1], "sequential") == 0) {
+        style = 0;
+      } else if(strcmp(currentArg->args[0], "style") == 0 && strcmp(currentArg->args[1], "parallel") == 0) {
+        style = 1;
+      } else {
+        if (style == 0) {
+          if (currentArg->args[0] && strcmp(currentArg->args[0], "exit") == 0) {
+            should_run = 0;
+            break;
+          }
+          execCommands(currentArg);
+        } else if (style == 1) {
+          if (currentArg->args[0] && strcmp(currentArg->args[0], "exit") == 0) {
+            should_run = 0;
+            if(current->next) {
+              *currentArg = current->next->command;
+            }
+          } else {
+            pthread_create(&threads[i], NULL, (void*)execCommands, currentArg);
+            i++;
+          }
+        }
       }
-
-      execCommands(currentArg);
-
       current = current->next;
     }
 
-    // int i = 0;
+    for (int j = 0; j < i; j++) {
+      pthread_join(threads[j], NULL);
+    }
+
     // while (current) {
     //   Args *currentArg = (Args *)malloc(sizeof(Args));
     //   *currentArg = current->command;
 
-    //   if (currentArg->args[0] && strcmp(currentArg->args[0], "exit") == 0) {
-    //     should_run = 0;
-    //     if(current->next) {
-    //       *currentArg = current->next->command;
-    //     }
-    //   } else {
-    //     pthread_create(&threads[i], NULL, (void*)execCommands, currentArg);
-    //     i++;
-    //   }
+
 
     //   current = current->next;
     // }
 
-    // for (int j = 0; j < i; j++) {
-    //   pthread_join(threads[j], NULL);
-    // }
+
 
     if(should_run == 0) {
       break;
@@ -182,3 +197,4 @@ void freeQueue(Node *head) {
     free(temp);
   }
 }
+
