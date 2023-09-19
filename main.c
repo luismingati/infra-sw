@@ -17,11 +17,19 @@ typedef struct Node {
     struct Node *next;
 } Node;
 
+char *lastCommand = NULL;
+
 Node* createArgsQueue(char *buffer);
 char *trim(char *str);
 int execCommands(Args *arg);
 int queueSize(Node *head);
 void freeQueue(Node *head);
+char* handleLastCommand(char *commandToken);
+Node* createArgsQueue(char *buffer);
+void enqueue(Node **head, Node **tail, Args args);
+char** tokenizeBySpace(char *commandToken);
+void execCommandsInBackground();
+
 
 int main(int argc, char *argv[]) {
   int should_run = 1;
@@ -66,7 +74,6 @@ int main(int argc, char *argv[]) {
 
     Node *head = createArgsQueue(buffer);
     Node *current = head;
-
     pthread_t threads[queueSize(head)];
 
     int i = 0;
@@ -138,45 +145,79 @@ int main(int argc, char *argv[]) {
 
   return 0;
 }
-//perguntar: Quando o usuario usa o comando git commit -m "a b c" ele entende ""a" "b" "c"" como strings separadas, é bug
+
 Node* createArgsQueue(char *buffer) {
   buffer[strcspn(buffer, "\n")] = 0;
 
   Node *head = NULL;
   Node *tail = NULL;
-  char *outer_saveptr = NULL, *inner_saveptr = NULL;
+  char *outer_saveptr = NULL;
 
   char *commandToken = strtok_r(buffer, ";", &outer_saveptr);
   while (commandToken) {
     commandToken = trim(commandToken);
-    char **argsList = malloc((strlen(commandToken) + 1) * sizeof(char *));
-    int index = 0;
-    char *argToken = strtok_r(commandToken, " ", &inner_saveptr);
 
-    while (argToken) {
-      argsList[index] = argToken;
-      argToken = strtok_r(NULL, " ", &inner_saveptr);
-      index++;
+    char *updatedCommand = handleLastCommand(commandToken);
+    if (!updatedCommand) {
+      commandToken = strtok_r(NULL, ";", &outer_saveptr);
+      continue;
     }
-    argsList[index] = NULL;
+
+    char **argsList = tokenizeBySpace(updatedCommand);
 
     Args args;
     args.args = argsList;
 
-    Node *newNode = malloc(sizeof(Node));
-    newNode->command = args;
-    newNode->next = NULL;
+    enqueue(&head, &tail, args);
 
-    if (!head) {
-      head = newNode;
-      tail = newNode;
-    } else {
-      tail->next = newNode;
-      tail = newNode;
-    }
     commandToken = strtok_r(NULL, ";", &outer_saveptr);
   }
   return head;
+}
+
+void enqueue(Node **head, Node **tail, Args args) {
+  Node *newNode = malloc(sizeof(Node));
+  newNode->command = args;
+  newNode->next = NULL;
+
+  if (!*head) {
+    *head = newNode;
+    *tail = newNode;
+  } else {
+    (*tail)->next = newNode;
+    *tail = newNode;
+  }
+}
+
+char** tokenizeBySpace(char *commandToken) {
+  char **argsList = malloc((strlen(commandToken) + 1) * sizeof(char *));
+  int index = 0;
+  char *inner_saveptr = NULL;
+  char *argToken = strtok_r(commandToken, " ", &inner_saveptr);
+
+  while (argToken) {
+    argsList[index] = argToken;
+    argToken = strtok_r(NULL, " ", &inner_saveptr);
+    index++;
+  }
+  argsList[index] = NULL;
+
+  return argsList;
+}
+
+char* handleLastCommand(char *commandToken) {
+  if (strcmp(commandToken, "!!") == 0) {
+    if (lastCommand == NULL) {
+      printf("No commands\n");
+      return NULL;
+    } else {
+      return strdup(lastCommand);
+    }
+  } else {
+    if (lastCommand != NULL) free(lastCommand);
+    lastCommand = strdup(commandToken);
+    return commandToken;
+  }
 }
 
 char *trim(char *str) {
@@ -229,3 +270,57 @@ void freeQueue(Node *head) {
     free(temp);
   }
 }
+
+// Node* createArgsQueue(char *buffer) {
+//   buffer[strcspn(buffer, "\n")] = 0;
+
+//   Node *head = NULL;
+//   Node *tail = NULL;
+//   char *outer_saveptr = NULL, *inner_saveptr = NULL;
+
+//   char *commandToken = strtok_r(buffer, ";", &outer_saveptr);
+//   while (commandToken) {
+//     commandToken = trim(commandToken);
+
+//     if (strcmp(commandToken, "!!") == 0) {
+//       if (lastCommand == NULL) {
+//         printf("No commands\n");
+//         commandToken = strtok_r(NULL, ";", &outer_saveptr);
+//         continue;
+//       } else {
+//         commandToken = strdup(lastCommand);
+//       }
+//     } else {
+//       if (lastCommand != NULL) free(lastCommand);
+//       lastCommand = strdup(commandToken);
+//     }
+
+//     char **argsList = malloc((strlen(commandToken) + 1) * sizeof(char *));
+//     int index = 0;
+//     char *argToken = strtok_r(commandToken, " ", &inner_saveptr);
+
+//     while (argToken) {
+//       argsList[index] = argToken;
+//       argToken = strtok_r(NULL, " ", &inner_saveptr);
+//       index++;
+//     }
+//     argsList[index] = NULL;
+
+//     Args args;
+//     args.args = argsList;
+
+//     Node *newNode = malloc(sizeof(Node));
+//     newNode->command = args;
+//     newNode->next = NULL;
+
+//     if (!head) {
+//       head = newNode;
+//       tail = newNode;
+//     } else {
+//       tail->next = newNode;
+//       tail = newNode;
+//     }
+//     commandToken = strtok_r(NULL, ";", &outer_saveptr);
+//   }
+//   return head;
+// }
