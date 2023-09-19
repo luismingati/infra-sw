@@ -10,7 +10,6 @@ int style = 0; //0 = sequential, 1 = parallel
 
 typedef struct Args {
   char **args;
-  int size;
 } Args;
 
 typedef struct Node {
@@ -24,24 +23,45 @@ int execCommands(Args *arg);
 int queueSize(Node *head);
 void freeQueue(Node *head);
 
-int main(void) {
+int main(int argc, char *argv[]) {
   int should_run = 1;
+  int batchMode = 0;
+  FILE *file = NULL;
+
+  if(argc == 2) {
+    batchMode = 1;
+  }
+
+  if (batchMode) {
+    file = fopen(argv[1], "r");
+    if (!file) {
+      printf("Error opening batch file");
+      return 1;
+    }
+  }
 
   while (should_run) {
-    if(style == 0) {
-      printf("locm seq> ");
-    } else if(style == 1) {
-      printf("locm par> ");
-    }
-    fflush(stdout);
-
     char *buffer = NULL;
     size_t n = 0;
-    ssize_t result = getline(&buffer, &n, stdin);
+    ssize_t result;
 
-    if (result == -1) {
+    if (batchMode) {
+      result = getline(&buffer, &n, file);
+      if (result == -1) {
+        break;
+      }
+    } else {
+      if(style == 0) {
+        printf("locm seq> ");
+      } else if(style == 1) {
+        printf("locm par> ");
+      }
+      fflush(stdout);
+      result = getline(&buffer, &n, stdin);
+      if (result == -1) {
         free(buffer);
         continue;
+      }
     }
 
     Node *head = createArgsQueue(buffer);
@@ -53,18 +73,42 @@ int main(void) {
     while (current) {
       Args *currentArg = (Args *)malloc(sizeof(Args));
       *currentArg = current->command;
-      if(strcmp(currentArg->args[0], "style") == 0 && strcmp(currentArg->args[1], "sequential") == 0) {
-        style = 0;
-      } else if(strcmp(currentArg->args[0], "style") == 0 && strcmp(currentArg->args[1], "parallel") == 0) {
-        style = 1;
+
+      if(strcmp(currentArg->args[0], "style") == 0) {
+        if(currentArg->args[1] == NULL) {
+          printf("style: option requires an argument \n");
+          printf("Try 'style --help' for more information.\n");
+        } else {
+          if(strcmp(currentArg->args[1], "sequential") == 0) {
+            style = 0;
+        } else if(strcmp(currentArg->args[1], "parallel") == 0) {
+            style = 1;
+        } else if (strcmp(currentArg->args[1], "--help") == 0) {
+            printf("Usage: style [OPTION]\n");
+            printf("Set the execution style of the shell.\n\n");
+            printf("Options:\n");
+            printf("sequential\t executes commands one after the other.\n");
+            printf("parallel\t executes commands in parallel using multithreads.\n");
+            printf("--help\t display this help and exit.\n");
+        } else if(strcmp(currentArg->args[1], "--help") != 0) {
+            printf("style: invalid option '%s'\n", currentArg->args[1]);
+            printf("Try 'style --help' for more information.\n");
+        } else {
+            printf("style: option requires an argument -- '%s'\n", currentArg->args[1]);
+            printf("Try 'style --help' for more information.\n");
+          }
+        }
       } else {
+
         if (style == 0) {
           if (currentArg->args[0] && strcmp(currentArg->args[0], "exit") == 0) {
             should_run = 0;
             break;
           }
           execCommands(currentArg);
+
         } else if (style == 1) {
+
           if (currentArg->args[0] && strcmp(currentArg->args[0], "exit") == 0) {
             should_run = 0;
             if(current->next) {
@@ -74,6 +118,7 @@ int main(void) {
             pthread_create(&threads[i], NULL, (void*)execCommands, currentArg);
             i++;
           }
+
         }
       }
       current = current->next;
@@ -82,17 +127,6 @@ int main(void) {
     for (int j = 0; j < i; j++) {
       pthread_join(threads[j], NULL);
     }
-
-    // while (current) {
-    //   Args *currentArg = (Args *)malloc(sizeof(Args));
-    //   *currentArg = current->command;
-
-
-
-    //   current = current->next;
-    // }
-
-
 
     if(should_run == 0) {
       break;
@@ -104,7 +138,6 @@ int main(void) {
 
   return 0;
 }
-
 //perguntar: Quando o usuario usa o comando git commit -m "a b c" ele entende ""a" "b" "c"" como strings separadas, é bug
 Node* createArgsQueue(char *buffer) {
   buffer[strcspn(buffer, "\n")] = 0;
@@ -129,7 +162,6 @@ Node* createArgsQueue(char *buffer) {
 
     Args args;
     args.args = argsList;
-    args.size = index;
 
     Node *newNode = malloc(sizeof(Node));
     newNode->command = args;
@@ -197,4 +229,3 @@ void freeQueue(Node *head) {
     free(temp);
   }
 }
-

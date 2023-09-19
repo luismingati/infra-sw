@@ -1,0 +1,2 @@
+style sequential; git add .; git commit -m "frexcura"; git push origin main
+exit
