@@ -5,6 +5,7 @@
 #include <sys/wait.h>
 #include <ctype.h>
 #include <pthread.h>
+#include <fcntl.h>
 
 int style = 0; //0 = sequential, 1 = parallel
 
@@ -249,25 +250,54 @@ char *trim(char *str) {
 }
 
 int execCommands(Args *arg) {
-  PipeCommands pipedCmds = splitPipeArgs(arg->args[0]);
-  if (pipedCmds.secondArgs) {
-    return execPipe(&pipedCmds);
-  }
+    pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "Fork Failed");
+        free(arg);
+        return 1;
+    } else if (pid == 0) {
 
-  pid_t pid = fork();
-  if (pid < 0) {
-    fprintf(stderr, "Fork Failed");
-    free(arg);
-    return 1;
-  } else if (pid == 0) {
-    execvp(arg->args[0], arg->args);
-    perror("locm seq> ");
-    exit(EXIT_FAILURE);
-  } else {
-    wait(NULL);
-    free(arg);
-  }
+        for (int i = 0; arg->args[i]; i++) {
+            if (strcmp(arg->args[i], ">") == 0) {
+                arg->args[i] = NULL;
+                int fd = open(arg->args[i+1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd == -1) {
+                    perror("locm seq> ");
+                    exit(EXIT_FAILURE);
+                }
+                dup2(fd, STDOUT_FILENO);
+                close(fd);
+            }
+            else if (strcmp(arg->args[i], ">>") == 0) {
+                arg->args[i] = NULL;
+                int fd = open(arg->args[i+1], O_WRONLY | O_CREAT | O_APPEND, 0644);
+                if (fd == -1) {
+                    perror("locm seq> ");
+                    exit(EXIT_FAILURE);
+                }
+                dup2(fd, STDOUT_FILENO);
+                close(fd);
+            }
+            else if (strcmp(arg->args[i], "<") == 0) {
+                arg->args[i] = NULL;
+                int fd = open(arg->args[i+1], O_RDONLY);
+                if (fd == -1) {
+                    perror("locm seq> ");
+                    exit(EXIT_FAILURE);
+                }
+                dup2(fd, STDIN_FILENO);
+                close(fd);
+            }
+        }
+        execvp(arg->args[0], arg->args);
+        perror("locm seq> ");
+        exit(EXIT_FAILURE);
+    } else {
+        wait(NULL);
+        free(arg);
+    }
 }
+
 
 int queueSize(Node *head) {
   int size = 0;
