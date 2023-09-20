@@ -1,2 +1,3 @@
-style sequential; git add .; git commit -m "frexcura"; git push origin main
+style parallel
+ls -l | sort -k 5; ps; sleep 5;
 exit

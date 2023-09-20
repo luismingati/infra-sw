@@ -17,6 +17,11 @@ typedef struct Node {
     struct Node *next;
 } Node;
 
+typedef struct {
+    char **firstArgs;
+    char **secondArgs;
+} PipeCommands;
+
 char *lastCommand = NULL;
 
 Node* createArgsQueue(char *buffer);
@@ -28,8 +33,8 @@ char* handleLastCommand(char *commandToken);
 Node* createArgsQueue(char *buffer);
 void enqueue(Node **head, Node **tail, Args args);
 char** tokenizeBySpace(char *commandToken);
-void execCommandsInBackground();
-
+PipeCommands splitPipeArgs(char *commandToken);
+int execPipe(PipeCommands *pipedCmds);
 
 int main(int argc, char *argv[]) {
   int should_run = 1;
@@ -142,7 +147,6 @@ int main(int argc, char *argv[]) {
     freeQueue(head);
     free(buffer);
   }
-
   return 0;
 }
 
@@ -163,7 +167,14 @@ Node* createArgsQueue(char *buffer) {
       continue;
     }
 
-    char **argsList = tokenizeBySpace(updatedCommand);
+    char **argsList = NULL;
+    if (strchr(updatedCommand, '|')) {
+      argsList = malloc(2 * sizeof(char *));
+      argsList[0] = updatedCommand;
+      argsList[1] = NULL;
+    } else {
+      argsList = tokenizeBySpace(updatedCommand);
+    }
 
     Args args;
     args.args = argsList;
@@ -174,6 +185,7 @@ Node* createArgsQueue(char *buffer) {
   }
   return head;
 }
+
 
 void enqueue(Node **head, Node **tail, Args args) {
   Node *newNode = malloc(sizeof(Node));
@@ -237,6 +249,11 @@ char *trim(char *str) {
 }
 
 int execCommands(Args *arg) {
+  PipeCommands pipedCmds = splitPipeArgs(arg->args[0]);
+  if (pipedCmds.secondArgs) {
+    return execPipe(&pipedCmds);
+  }
+
   pid_t pid = fork();
   if (pid < 0) {
     fprintf(stderr, "Fork Failed");
@@ -271,56 +288,60 @@ void freeQueue(Node *head) {
   }
 }
 
-// Node* createArgsQueue(char *buffer) {
-//   buffer[strcspn(buffer, "\n")] = 0;
+PipeCommands splitPipeArgs(char *commandToken) {
+  PipeCommands pipedCmds;
+  pipedCmds.firstArgs = NULL;
+  pipedCmds.secondArgs = NULL;
 
-//   Node *head = NULL;
-//   Node *tail = NULL;
-//   char *outer_saveptr = NULL, *inner_saveptr = NULL;
+  char *pipeLoc = strchr(commandToken, '|');
+  if (pipeLoc) {
 
-//   char *commandToken = strtok_r(buffer, ";", &outer_saveptr);
-//   while (commandToken) {
-//     commandToken = trim(commandToken);
+  *pipeLoc = '\0';
+  pipeLoc++;
+  pipeLoc = trim(pipeLoc);
 
-//     if (strcmp(commandToken, "!!") == 0) {
-//       if (lastCommand == NULL) {
-//         printf("No commands\n");
-//         commandToken = strtok_r(NULL, ";", &outer_saveptr);
-//         continue;
-//       } else {
-//         commandToken = strdup(lastCommand);
-//       }
-//     } else {
-//       if (lastCommand != NULL) free(lastCommand);
-//       lastCommand = strdup(commandToken);
-//     }
+  pipedCmds.firstArgs = tokenizeBySpace(commandToken);
+  pipedCmds.secondArgs = tokenizeBySpace(pipeLoc);
+  }
 
-//     char **argsList = malloc((strlen(commandToken) + 1) * sizeof(char *));
-//     int index = 0;
-//     char *argToken = strtok_r(commandToken, " ", &inner_saveptr);
+  return pipedCmds;
+}
 
-//     while (argToken) {
-//       argsList[index] = argToken;
-//       argToken = strtok_r(NULL, " ", &inner_saveptr);
-//       index++;
-//     }
-//     argsList[index] = NULL;
+int execPipe(PipeCommands *pipedCmds) {
+  int fd[2];
+  pipe(fd);
+  pid_t pid1 = fork();
 
-//     Args args;
-//     args.args = argsList;
+  if (pid1 < 0) {
+    fprintf(stderr, "Fork Failed");
+    return 1;
+  } else if (pid1 == 0) {
+    close(fd[0]);
+    dup2(fd[1], STDOUT_FILENO);
+    close(fd[1]);
+    execvp(pipedCmds->firstArgs[0], pipedCmds->firstArgs);
+    perror("locm seq> ");
+    exit(EXIT_FAILURE);
+  }
 
-//     Node *newNode = malloc(sizeof(Node));
-//     newNode->command = args;
-//     newNode->next = NULL;
+  pid_t pid2 = fork();
+  if (pid2 < 0) {
+    fprintf(stderr, "Fork Failed");
+    return 1;
+  } else if (pid2 == 0) {
+    close(fd[1]);
+    dup2(fd[0], STDIN_FILENO);
+    close(fd[0]);
+    execvp(pipedCmds->secondArgs[0], pipedCmds->secondArgs);
+    perror("locm seq> ");
+    exit(EXIT_FAILURE);
+  }
 
-//     if (!head) {
-//       head = newNode;
-//       tail = newNode;
-//     } else {
-//       tail->next = newNode;
-//       tail = newNode;
-//     }
-//     commandToken = strtok_r(NULL, ";", &outer_saveptr);
-//   }
-//   return head;
-// }
+  close(fd[0]);
+  close(fd[1]);
+
+  waitpid(pid1, NULL, 0);
+  waitpid(pid2, NULL, 0);
+
+  return 0;
+}
