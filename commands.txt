@@ -1,3 +1,0 @@
-style parallel
-ls -l | sort -k 5; ps; sleep 5;
-exit

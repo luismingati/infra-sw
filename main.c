@@ -36,6 +36,9 @@ void enqueue(Node **head, Node **tail, Args args);
 char** tokenizeBySpace(char *commandToken);
 PipeCommands splitPipeArgs(char *commandToken);
 int execPipe(PipeCommands *pipedCmds);
+char *find_redir_operator(char *s);
+void handleRedirection(Args *arg);
+
 
 int main(int argc, char *argv[]) {
   int should_run = 1;
@@ -101,8 +104,8 @@ int main(int argc, char *argv[]) {
             printf("Set the execution style of the shell.\n\n");
             printf("Options:\n");
             printf("sequential\t executes commands one after the other.\n");
-            printf("parallel\t executes commands in parallel using multithreads.\n");
-            printf("--help\t display this help and exit.\n");
+            printf("parallel  \t executes commands in parallel using multithreads.\n");
+            printf("--help    \t display this help and exit.\n");
         } else if(strcmp(currentArg->args[1], "--help") != 0) {
             printf("style: invalid option '%s'\n", currentArg->args[1]);
             printf("Try 'style --help' for more information.\n");
@@ -187,7 +190,6 @@ Node* createArgsQueue(char *buffer) {
   return head;
 }
 
-
 void enqueue(Node **head, Node **tail, Args args) {
   Node *newNode = malloc(sizeof(Node));
   newNode->command = args;
@@ -202,20 +204,48 @@ void enqueue(Node **head, Node **tail, Args args) {
   }
 }
 
-char** tokenizeBySpace(char *commandToken) {
-  char **argsList = malloc((strlen(commandToken) + 1) * sizeof(char *));
-  int index = 0;
-  char *inner_saveptr = NULL;
-  char *argToken = strtok_r(commandToken, " ", &inner_saveptr);
+char **tokenizeBySpace(char *input) {
+    char **tokens = malloc(sizeof(input) * sizeof(char *));
+    int index = 0;
+    char *currentPos = input;
+    char *nextSpace;
+    char *redir;
 
-  while (argToken) {
-    argsList[index] = argToken;
-    argToken = strtok_r(NULL, " ", &inner_saveptr);
-    index++;
-  }
-  argsList[index] = NULL;
+    while (*currentPos) {
+        redir = find_redir_operator(currentPos);
+        if (redir) {
+            // Se houver espaço antes do operador
+            if (currentPos != strstr(currentPos, redir) && *(currentPos - 1) == ' ') {
+                tokens[index++] = strndup(currentPos, strstr(currentPos, redir) - currentPos - 1);
+                currentPos += (strstr(currentPos, redir) - currentPos);
+            }
+            // Se houver espaço após o operador
+            else if (*(currentPos + strlen(redir)) == ' ' || *(currentPos + strlen(redir)) == '\0') {
+                tokens[index++] = strndup(currentPos, strlen(redir));
+                currentPos += strlen(redir) + 1;
+            }
+            // Se o operador estiver "grudado" em outros argumentos
+            else {
+                if (currentPos != strstr(currentPos, redir)) {
+                    tokens[index++] = strndup(currentPos, strstr(currentPos, redir) - currentPos);
+                    currentPos += (strstr(currentPos, redir) - currentPos);
+                }
+                tokens[index++] = strndup(redir, strlen(redir));
+                currentPos += strlen(redir);
+            }
+        } else {
+            nextSpace = strchr(currentPos, ' ');
+            if (!nextSpace) {
+                tokens[index++] = strdup(currentPos);
+                break;
+            }
+            tokens[index++] = strndup(currentPos, nextSpace - currentPos);
+            currentPos = nextSpace + 1;
+        }
+    }
+    tokens[index] = NULL;
 
-  return argsList;
+    return tokens;
 }
 
 char* handleLastCommand(char *commandToken) {
@@ -250,45 +280,19 @@ char *trim(char *str) {
 }
 
 int execCommands(Args *arg) {
+    if (strchr(arg->args[0], '|')) {
+      PipeCommands pipedCmds = splitPipeArgs(arg->args[0]);
+      if (pipedCmds.firstArgs && pipedCmds.secondArgs) {
+        return execPipe(&pipedCmds);
+      }
+    }
     pid_t pid = fork();
     if (pid < 0) {
         fprintf(stderr, "Fork Failed");
         free(arg);
         return 1;
     } else if (pid == 0) {
-
-        for (int i = 0; arg->args[i]; i++) {
-            if (strcmp(arg->args[i], ">") == 0) {
-                arg->args[i] = NULL;
-                int fd = open(arg->args[i+1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                if (fd == -1) {
-                    perror("locm seq> ");
-                    exit(EXIT_FAILURE);
-                }
-                dup2(fd, STDOUT_FILENO);
-                close(fd);
-            }
-            else if (strcmp(arg->args[i], ">>") == 0) {
-                arg->args[i] = NULL;
-                int fd = open(arg->args[i+1], O_WRONLY | O_CREAT | O_APPEND, 0644);
-                if (fd == -1) {
-                    perror("locm seq> ");
-                    exit(EXIT_FAILURE);
-                }
-                dup2(fd, STDOUT_FILENO);
-                close(fd);
-            }
-            else if (strcmp(arg->args[i], "<") == 0) {
-                arg->args[i] = NULL;
-                int fd = open(arg->args[i+1], O_RDONLY);
-                if (fd == -1) {
-                    perror("locm seq> ");
-                    exit(EXIT_FAILURE);
-                }
-                dup2(fd, STDIN_FILENO);
-                close(fd);
-            }
-        }
+        handleRedirection(arg);
         execvp(arg->args[0], arg->args);
         perror("locm seq> ");
         exit(EXIT_FAILURE);
@@ -297,7 +301,6 @@ int execCommands(Args *arg) {
         free(arg);
     }
 }
-
 
 int queueSize(Node *head) {
   int size = 0;
@@ -333,7 +336,6 @@ PipeCommands splitPipeArgs(char *commandToken) {
   pipedCmds.firstArgs = tokenizeBySpace(commandToken);
   pipedCmds.secondArgs = tokenizeBySpace(pipeLoc);
   }
-
   return pipedCmds;
 }
 
@@ -374,4 +376,44 @@ int execPipe(PipeCommands *pipedCmds) {
   waitpid(pid2, NULL, 0);
 
   return 0;
+}
+
+char *find_redir_operator(char *string) {
+    if (strstr(string, ">>")) {
+        return ">>";
+    }
+    if (strstr(string, ">")) {
+        return ">";
+    }
+    if (strstr(string, "<")) {
+        return "<";
+    }
+    return NULL;
+}
+
+
+void handleRedirection(Args *arg) {
+    for (int i = 0; arg->args[i]; i++) {
+        int fd = -1;
+
+        if (strcmp(arg->args[i], ">") == 0) {
+            fd = open(arg->args[i+1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            dup2(fd, STDOUT_FILENO);
+        }
+        else if (strcmp(arg->args[i], ">>") == 0) {
+            fd = open(arg->args[i+1], O_WRONLY | O_CREAT | O_APPEND, 0644);
+            dup2(fd, STDOUT_FILENO);
+        }
+        else if (strcmp(arg->args[i], "<") == 0) {
+            fd = open(arg->args[i+1], O_RDONLY);
+            dup2(fd, STDIN_FILENO);
+        }
+
+        if (fd != -1) {
+            close(fd);
+            arg->args[i] = NULL;
+            arg->args[i+1] = NULL;
+            break; // Assume only one redirection for now
+        }
+    }
 }
