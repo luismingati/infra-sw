@@ -38,6 +38,7 @@ PipeCommands splitPipeArgs(char *commandToken);
 int execPipe(PipeCommands *pipedCmds);
 char *find_redir_operator(char *s);
 void handleRedirection(Args *arg);
+int execPipeParallel(PipeCommands *pipedCmds);
 
 
 int main(int argc, char *argv[]) {
@@ -205,47 +206,24 @@ void enqueue(Node **head, Node **tail, Args args) {
 }
 
 char **tokenizeBySpace(char *input) {
-    char **tokens = malloc(sizeof(input) * sizeof(char *));
-    int index = 0;
-    char *currentPos = input;
-    char *nextSpace;
-    char *redir;
+  char **tokens = malloc(sizeof(input) * sizeof(char *));
+  int index = 0;
+  char *currentPos = input;
+  char *nextSpace;
+  char *redir;
 
-    while (*currentPos) {
-        redir = find_redir_operator(currentPos);
-        if (redir) {
-            // Se houver espaço antes do operador
-            if (currentPos != strstr(currentPos, redir) && *(currentPos - 1) == ' ') {
-                tokens[index++] = strndup(currentPos, strstr(currentPos, redir) - currentPos - 1);
-                currentPos += (strstr(currentPos, redir) - currentPos);
-            }
-            // Se houver espaço após o operador
-            else if (*(currentPos + strlen(redir)) == ' ' || *(currentPos + strlen(redir)) == '\0') {
-                tokens[index++] = strndup(currentPos, strlen(redir));
-                currentPos += strlen(redir) + 1;
-            }
-            // Se o operador estiver "grudado" em outros argumentos
-            else {
-                if (currentPos != strstr(currentPos, redir)) {
-                    tokens[index++] = strndup(currentPos, strstr(currentPos, redir) - currentPos);
-                    currentPos += (strstr(currentPos, redir) - currentPos);
-                }
-                tokens[index++] = strndup(redir, strlen(redir));
-                currentPos += strlen(redir);
-            }
-        } else {
-            nextSpace = strchr(currentPos, ' ');
-            if (!nextSpace) {
-                tokens[index++] = strdup(currentPos);
-                break;
-            }
-            tokens[index++] = strndup(currentPos, nextSpace - currentPos);
-            currentPos = nextSpace + 1;
-        }
+  while (*currentPos) {
+    nextSpace = strchr(currentPos, ' ');
+    if (!nextSpace) {
+      tokens[index++] = strdup(currentPos);
+      break;
     }
-    tokens[index] = NULL;
+    tokens[index++] = strndup(currentPos, nextSpace - currentPos);
+    currentPos = nextSpace + 1;
+  }
+  tokens[index] = NULL;
 
-    return tokens;
+  return tokens;
 }
 
 char* handleLastCommand(char *commandToken) {
@@ -328,54 +306,56 @@ PipeCommands splitPipeArgs(char *commandToken) {
 
   char *pipeLoc = strchr(commandToken, '|');
   if (pipeLoc) {
+    *pipeLoc = '\0';
+    pipeLoc++;
+    pipeLoc = trim(pipeLoc);
 
-  *pipeLoc = '\0';
-  pipeLoc++;
-  pipeLoc = trim(pipeLoc);
-
-  pipedCmds.firstArgs = tokenizeBySpace(commandToken);
-  pipedCmds.secondArgs = tokenizeBySpace(pipeLoc);
+    pipedCmds.firstArgs = tokenizeBySpace(commandToken);
+    pipedCmds.secondArgs = tokenizeBySpace(pipeLoc);
   }
+
   return pipedCmds;
 }
 
 int execPipe(PipeCommands *pipedCmds) {
-  int fd[2];
-  pipe(fd);
-  pid_t pid1 = fork();
+    int fd[2];
+    if (pipe(fd) < 0) {
+        fprintf(stderr, "Pipe creation failed");
+        return 1;
+    }
 
-  if (pid1 < 0) {
-    fprintf(stderr, "Fork Failed");
-    return 1;
-  } else if (pid1 == 0) {
+    pid_t pid1 = fork();
+
+    if (pid1 == 0) {
+        close(fd[0]);
+        dup2(fd[1], STDOUT_FILENO);
+        close(fd[1]);
+
+        if (execvp(pipedCmds->firstArgs[0], pipedCmds->firstArgs) < 0) {
+            perror("locm seq> ");
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    pid_t pid2 = fork();
+    if (pid2 == 0) {
+        close(fd[1]);
+        dup2(fd[0], STDIN_FILENO);
+        close(fd[0]);
+
+        if (execvp(pipedCmds->secondArgs[0], pipedCmds->secondArgs) < 0) {
+            perror("locm seq> ");
+            exit(EXIT_FAILURE);
+        }
+    }
+
     close(fd[0]);
-    dup2(fd[1], STDOUT_FILENO);
     close(fd[1]);
-    execvp(pipedCmds->firstArgs[0], pipedCmds->firstArgs);
-    perror("locm seq> ");
-    exit(EXIT_FAILURE);
-  }
 
-  pid_t pid2 = fork();
-  if (pid2 < 0) {
-    fprintf(stderr, "Fork Failed");
-    return 1;
-  } else if (pid2 == 0) {
-    close(fd[1]);
-    dup2(fd[0], STDIN_FILENO);
-    close(fd[0]);
-    execvp(pipedCmds->secondArgs[0], pipedCmds->secondArgs);
-    perror("locm seq> ");
-    exit(EXIT_FAILURE);
-  }
+    waitpid(pid1, NULL, 0);
+    waitpid(pid2, NULL, 0);
 
-  close(fd[0]);
-  close(fd[1]);
-
-  waitpid(pid1, NULL, 0);
-  waitpid(pid2, NULL, 0);
-
-  return 0;
+    return 0;
 }
 
 char *find_redir_operator(char *string) {
@@ -391,29 +371,40 @@ char *find_redir_operator(char *string) {
     return NULL;
 }
 
-
 void handleRedirection(Args *arg) {
     for (int i = 0; arg->args[i]; i++) {
-        int fd = -1;
+        char *operator = find_redir_operator(arg->args[i]);
+        if (operator) {
+            if (!arg->args[i + 1]) {
+                fprintf(stderr, "Error: missing filename after '%s'\n", operator);
+                exit(EXIT_FAILURE);
+            }
 
-        if (strcmp(arg->args[i], ">") == 0) {
-            fd = open(arg->args[i+1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            dup2(fd, STDOUT_FILENO);
-        }
-        else if (strcmp(arg->args[i], ">>") == 0) {
-            fd = open(arg->args[i+1], O_WRONLY | O_CREAT | O_APPEND, 0644);
-            dup2(fd, STDOUT_FILENO);
-        }
-        else if (strcmp(arg->args[i], "<") == 0) {
-            fd = open(arg->args[i+1], O_RDONLY);
-            dup2(fd, STDIN_FILENO);
-        }
+            int fd = -1;
+            if (strcmp(operator, ">") == 0) {
+                fd = open(arg->args[i + 1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            } else if (strcmp(operator, ">>") == 0) {
+                fd = open(arg->args[i + 1], O_WRONLY | O_CREAT | O_APPEND, 0644);
+            } else if (strcmp(operator, "<") == 0) {
+                fd = open(arg->args[i + 1], O_RDONLY);
+            }
 
-        if (fd != -1) {
+            if (fd == -1) {
+                perror("Error opening file");
+                exit(EXIT_FAILURE);
+            }
+
+            if (strcmp(operator, "<") == 0) {
+                dup2(fd, STDIN_FILENO);
+            } else {
+                dup2(fd, STDOUT_FILENO);
+            }
+
             close(fd);
             arg->args[i] = NULL;
-            arg->args[i+1] = NULL;
-            break; // Assume only one redirection for now
+            arg->args[i + 1] = NULL;
+            break;
         }
     }
 }
+

@@ -1,0 +1,6 @@
+total 68
+-rw-rw-r-- 1 luismingati luismingati     0 set 21 16:26 commands.txt
+-rwxrwxr-x 1 luismingati luismingati 29968 set 22 16:49 main
+-rw-rw-r-- 1 luismingati luismingati 10992 set 22 16:49 main.c
+-rwxrwxr-x 1 luismingati luismingati 21768 set 21 16:25 shell
+-rw-r--r-- 1 luismingati luismingati     0 set 22 16:49 test
