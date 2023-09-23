@@ -10,7 +10,8 @@
 int style = 0; //0 = sequential, 1 = parallel
 
 typedef struct Args {
-  char **args;
+    char **args;
+    int background;  // 0 = foreground, 1 = background
 } Args;
 
 typedef struct Node {
@@ -23,9 +24,16 @@ typedef struct {
     char **secondArgs;
 } PipeCommands;
 
-char *lastCommand = NULL;
+typedef struct BgProcess {
+    pid_t pid;
+    int job_number;
+    struct BgProcess* next;
+} BgProcess;
 
-Node* createArgsQueue(char *buffer);
+char *lastCommand = NULL;
+BgProcess* bg_processes = NULL;
+int job_count = 0;
+
 char *trim(char *str);
 int execCommands(Args *arg);
 int queueSize(Node *head);
@@ -39,7 +47,10 @@ int execPipe(PipeCommands *pipedCmds);
 char *find_redir_operator(char *s);
 void handleRedirection(Args *arg);
 int execPipeParallel(PipeCommands *pipedCmds);
-
+void addBgProcess(pid_t pid);
+void removeBgProcess(pid_t pid);
+void executeFgCommand(char** tokens);
+BgProcess* findBgProcessByJobNumber(int job_number);
 
 int main(int argc, char *argv[]) {
   int should_run = 1;
@@ -91,7 +102,9 @@ int main(int argc, char *argv[]) {
       Args *currentArg = (Args *)malloc(sizeof(Args));
       *currentArg = current->command;
 
-      if(strcmp(currentArg->args[0], "style") == 0) {
+      if (strcmp(currentArg->args[0], "fg") == 0) {
+        executeFgCommand(currentArg->args);
+      } else if(strcmp(currentArg->args[0], "style") == 0) {
         if(currentArg->args[1] == NULL) {
           printf("style: option requires an argument \n");
           printf("Try 'style --help' for more information.\n");
@@ -156,40 +169,51 @@ int main(int argc, char *argv[]) {
 }
 
 Node* createArgsQueue(char *buffer) {
-  buffer[strcspn(buffer, "\n")] = 0;
+    buffer[strcspn(buffer, "\n")] = 0;
 
-  Node *head = NULL;
-  Node *tail = NULL;
-  char *outer_saveptr = NULL;
+    Node *head = NULL;
+    Node *tail = NULL;
+    char *outer_saveptr = NULL;
 
-  char *commandToken = strtok_r(buffer, ";", &outer_saveptr);
-  while (commandToken) {
-    commandToken = trim(commandToken);
+    char *commandToken = strtok_r(buffer, ";", &outer_saveptr);
+    while (commandToken) {
+        commandToken = trim(commandToken);
 
-    char *updatedCommand = handleLastCommand(commandToken);
-    if (!updatedCommand) {
-      commandToken = strtok_r(NULL, ";", &outer_saveptr);
-      continue;
+        // Verificando se o comando deve ser executado em background
+        int background = 0;  // Por padrão, definido como foreground
+        int len = strlen(commandToken);
+        if (len > 0 && commandToken[len - 1] == '&') {
+            background = 1;  // Marcar para executar em background
+            commandToken[len - 1] = '\0';  // Remover o & do comando
+            commandToken = trim(commandToken);  // Trim novamente após a remoção do &
+        }
+
+        char *updatedCommand = handleLastCommand(commandToken);
+        if (!updatedCommand) {
+            commandToken = strtok_r(NULL, ";", &outer_saveptr);
+            continue;
+        }
+
+        char **argsList = NULL;
+        if (strchr(updatedCommand, '|')) {
+            argsList = malloc(2 * sizeof(char *));
+            argsList[0] = updatedCommand;
+            argsList[1] = NULL;
+        } else {
+            argsList = tokenizeBySpace(updatedCommand);
+        }
+
+        Args args;
+        args.args = argsList;
+        args.background = background;  // Adicione esta linha para setar a propriedade de background
+
+        enqueue(&head, &tail, args);
+
+        commandToken = strtok_r(NULL, ";", &outer_saveptr);
     }
-
-    char **argsList = NULL;
-    if (strchr(updatedCommand, '|')) {
-      argsList = malloc(2 * sizeof(char *));
-      argsList[0] = updatedCommand;
-      argsList[1] = NULL;
-    } else {
-      argsList = tokenizeBySpace(updatedCommand);
-    }
-
-    Args args;
-    args.args = argsList;
-
-    enqueue(&head, &tail, args);
-
-    commandToken = strtok_r(NULL, ";", &outer_saveptr);
-  }
-  return head;
+    return head;
 }
+
 
 void enqueue(Node **head, Node **tail, Args args) {
   Node *newNode = malloc(sizeof(Node));
@@ -259,26 +283,33 @@ char *trim(char *str) {
 
 int execCommands(Args *arg) {
     if (strchr(arg->args[0], '|')) {
-      PipeCommands pipedCmds = splitPipeArgs(arg->args[0]);
-      if (pipedCmds.firstArgs && pipedCmds.secondArgs) {
-        return execPipe(&pipedCmds);
-      }
+        PipeCommands pipedCmds = splitPipeArgs(arg->args[0]);
+        if (pipedCmds.firstArgs && pipedCmds.secondArgs) {
+            return execPipe(&pipedCmds);
+        }
     }
+
     pid_t pid = fork();
     if (pid < 0) {
         fprintf(stderr, "Fork Failed");
         free(arg);
         return 1;
-    } else if (pid == 0) {
+    } else if (pid == 0) {  // Código do processo filho
         handleRedirection(arg);
         execvp(arg->args[0], arg->args);
         perror("locm seq> ");
         exit(EXIT_FAILURE);
-    } else {
-        wait(NULL);
-        free(arg);
+    } else {  // Código do processo pai
+        if (arg->background) {  // Se for para executar em background
+            addBgProcess(pid);  // Adiciona o processo à lista de processos em background
+        } else {
+            waitpid(pid, NULL, 0);  // Espera o processo filho se for foreground
+            free(arg);
+        }
     }
+    return 0;
 }
+
 
 int queueSize(Node *head) {
   int size = 0;
@@ -372,39 +403,99 @@ char *find_redir_operator(char *string) {
 }
 
 void handleRedirection(Args *arg) {
-    for (int i = 0; arg->args[i]; i++) {
-        char *operator = find_redir_operator(arg->args[i]);
-        if (operator) {
-            if (!arg->args[i + 1]) {
-                fprintf(stderr, "Error: missing filename after '%s'\n", operator);
-                exit(EXIT_FAILURE);
-            }
+  for (int i = 0; arg->args[i]; i++) {
+      char *operator = find_redir_operator(arg->args[i]);
+      if (operator) {
+          if (!arg->args[i + 1]) {
+              fprintf(stderr, "Error: missing filename after '%s'\n", operator);
+              exit(EXIT_FAILURE);
+          }
 
-            int fd = -1;
-            if (strcmp(operator, ">") == 0) {
-                fd = open(arg->args[i + 1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            } else if (strcmp(operator, ">>") == 0) {
-                fd = open(arg->args[i + 1], O_WRONLY | O_CREAT | O_APPEND, 0644);
-            } else if (strcmp(operator, "<") == 0) {
-                fd = open(arg->args[i + 1], O_RDONLY);
-            }
+          int fd = -1;
+          if (strcmp(operator, ">") == 0) {
+              fd = open(arg->args[i + 1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+          } else if (strcmp(operator, ">>") == 0) {
+              fd = open(arg->args[i + 1], O_WRONLY | O_CREAT | O_APPEND, 0644);
+          } else if (strcmp(operator, "<") == 0) {
+              fd = open(arg->args[i + 1], O_RDONLY);
+          }
 
-            if (fd == -1) {
-                perror("Error opening file");
-                exit(EXIT_FAILURE);
-            }
+          if (fd == -1) {
+              perror("Error opening file");
+              exit(EXIT_FAILURE);
+          }
 
-            if (strcmp(operator, "<") == 0) {
-                dup2(fd, STDIN_FILENO);
+          if (strcmp(operator, "<") == 0) {
+              dup2(fd, STDIN_FILENO);
+          } else {
+              dup2(fd, STDOUT_FILENO);
+          }
+
+          close(fd);
+          arg->args[i] = NULL;
+          arg->args[i + 1] = NULL;
+          break;
+      }
+  }
+}
+
+void addBgProcess(pid_t pid) {
+    BgProcess* newProcess = malloc(sizeof(BgProcess));
+    newProcess->pid = pid;
+    newProcess->job_number = ++job_count;  // Incrementa o contador de jobs
+    newProcess->next = bg_processes;
+    bg_processes = newProcess;
+
+    printf("[%d] %d\n", newProcess->job_number, newProcess->pid);
+}
+
+void removeBgProcess(pid_t pid) {
+    BgProcess* current = bg_processes;
+    BgProcess* prev = NULL;
+    while (current) {
+        if (current->pid == pid) {
+            if (prev) {
+                prev->next = current->next;
             } else {
-                dup2(fd, STDOUT_FILENO);
+                bg_processes = current->next;
             }
-
-            close(fd);
-            arg->args[i] = NULL;
-            arg->args[i + 1] = NULL;
-            break;
+            free(current);
+            return;
         }
+        prev = current;
+        current = current->next;
     }
 }
 
+BgProcess* findBgProcessByJobNumber(int job_number) {
+    BgProcess* current = bg_processes;
+    while (current) {
+        if (current->job_number == job_number) {
+            return current;
+        }
+        current = current->next;
+    }
+    return NULL;
+}
+
+void executeFgCommand(char** tokens) {
+    // Se não há argumento após "fg" ou se o argumento não é um número
+    if (!tokens[1] || !isdigit(tokens[1][0])) {
+        fprintf(stderr, "Usage: fg <job_number>\n");
+        return;
+    }
+
+    int job_number = atoi(tokens[1]);
+    BgProcess* process = findBgProcessByJobNumber(job_number);
+
+    if (!process) {
+        fprintf(stderr, "No such job: %d\n", job_number);
+        return;
+    }
+
+    // Espera o processo se completar
+    waitpid(process->pid, NULL, 0);
+
+    // Após esperar pelo processo, remova-o da lista de processos em background
+    removeBgProcess(process->pid);
+}
