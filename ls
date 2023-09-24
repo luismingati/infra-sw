@@ -1,12 +1,14 @@
 commands.txt
-datefile
+ls
 main
 main.c
 ps
 shell
+test
 commands.txt
-datefile
+ls
 main
 main.c
 ps
 shell
+test

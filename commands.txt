@@ -1,0 +1,56 @@
+
+ls -l;
+ps
+ls
+sleep 1;
+
+ls -l;
+ps
+ls
+sleep 1;
+
+ls -l;
+ps
+ls
+sleep 1;
+
+ls -l;
+ps
+ls
+sleep 1;
+
+ls -l;
+ps
+ls
+sleep 1;
+
+ls -l;
+ps
+ls
+sleep 1;
+
+ls -l;
+ps
+ls
+sleep 1;
+
+ls -l;
+ps
+ls
+sleep 1;
+
+ls -l;
+ps
+ls
+sleep 1;
+
+ls -l;
+ps
+ls
+sleep 1;
+
+ls -l;
+ps
+ls
+sleep 1;
+
